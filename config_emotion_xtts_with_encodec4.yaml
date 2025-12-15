@@ -1,0 +1,291 @@
+# ============================================================================
+# EMMA XTTS EMOTION CONFIGURATION - WITH ENCODEC VOCODER
+# ============================================================================
+# 
+# ✅ KEY CHANGES FROM PREVIOUS:
+# 1. vocoder_type: "encodec" (properly integrated)
+# 2. use_encodec_vocoder: true (explicit flag)
+# 3. All other settings optimized for EnCodec training
+# ============================================================================
+
+# Training Configuration
+output_path: "/home/ubuntu/TTS/outputs/emma_xtts_with_encodec"
+run_name: "emma_xtts_encodec_v1"
+use_cuda: true
+mixed_precision: false
+precision: "fp16"
+logger_uri: null
+project_name: "emma_emotion_encodec"
+run_description: "✅ XTTS with EnCodec vocoder for maximum quality"
+print_step: 10
+plot_step: 50
+save_n_checkpoints: 10
+save_checkpoints: true
+save_all_best: true
+save_best_after: 500
+run_eval: true
+run_eval_steps: 150
+training_seed: 42
+
+# Gradient Management
+grad_clip: 2.0
+grad_accum_steps: 1
+max_grad_norm: 10.0
+
+# ✅ AUTOREGRESSIVE TRAINING - Solves 6-token bottleneck
+# Trains model to predict sequential 6-token chunks with rolling context
+# This enables high-quality 30-second generation
+autoregressive:
+  enabled: false  # Set to false to use standard training
+  chunk_size: 6  # Must match GPT output tokens (do NOT change)
+  context_size: 30  # Previous tokens for context window
+
+# Dataset Configuration
+datasets:
+  - formatter: "csv_formatter"
+    dataset_name: "emma"
+    language: "en"
+    path: "/home/ubuntu/emma_dataset"
+    meta_file_train: "metadata_with_emotions.csv"
+    meta_file_val: "metadata_with_emotions.csv"
+    delimiter: "|"
+    path_column: 0
+    path_key: file
+    text_column: 1
+    speaker_column: 2
+    durations_column: 3
+    emotion_column: 4
+
+audio_config:
+  sample_rate: 24000
+  num_mels: 80
+  fft_size: 4096
+  win_length: 1024
+  hop_length: 256
+  mel_fmin: 0
+  mel_fmax: 12000
+  power: 1.0
+  preemphasis: 0.0
+  ref_level_db: 20
+  spec_gain: 20.0
+  signal_norm: true
+  symmetric_norm: true
+  max_norm: 4.0
+  clip_norm: true
+
+# Model and Checkpoints
+model: "xtts"
+tokenizer: "VoiceBpeTokenizer"
+
+xtts_checkpoint: "/home/ubuntu/TTS/pretrained/xtts_v2/model.pth"
+weights_only: false
+
+dvae_checkpoint: "/home/ubuntu/TTS/pretrained/xtts_v2/dvae.pth"
+mel_norm_file: "/home/ubuntu/TTS/pretrained/xtts_v2/mel_stats.pth"
+speakers_file_path: "/home/ubuntu/TTS/pretrained/xtts_v2/speakers_xtts.pth"
+tokenizer_file: "/home/ubuntu/TTS/pretrained/xtts_v2/vocab.json"
+
+# ========================
+# EMOTION CONFIGURATION (7 EMOTIONS FROM TEXT CLASSIFIER)
+# ========================
+use_emotions: true
+text_emotion_classifier_path: "/home/ubuntu/TTS/models/text_emotion_classifier"
+emotion_categories: ["neutral", "happy", "sad", "angry", "surprised", "fearful", "disgusted"]
+
+emotion:
+  num_emotions: 7
+  input_dim: 512
+  dropout: 0.3
+  architecture: "multi_scale"
+  feature_normalization: "standard_scale"
+  use_layer_norm: false
+  use_standard_scaler: false
+  label_smoothing: 0.05
+  temperature: 1.0
+
+# ✅ BALANCED CLASS WEIGHTS FOR 7 EMOTIONS
+emotion_class_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+# ✅ DYNAMIC CLASS WEIGHT RECALCULATION
+dynamic_class_weights:
+  enabled: true
+  recalc_frequency: 5
+  adjustment_strength: 1.5
+  use_confusion_matrix: true
+  use_effective_num: true
+  effective_beta: 0.9999
+
+# ✅ FOCAL LOSS CONFIGURATION
+emotion_focal_loss:
+  enabled: true
+  alpha: "from_class_weights"
+  gamma: 2.0
+
+emotion_embedding_dim: 64
+
+# ✅ BALANCED BATCH SAMPLING
+use_balanced_sampling: true
+balanced_sampling:
+  mode: "weighted"
+  oversample_minority: true
+  undersample_majority: false
+  samples_per_class: 1
+
+# Prosody Configuration
+use_prosody: true
+prosody_features: ["pitch", "energy", "duration"]
+prosody_embedding_dim: 128
+
+# ========================
+# ✅ ENCODEC VOCODER CONFIGURATION
+# ========================
+use_enhanced_vocoder: true
+vocoder_type: "encodec"
+encodec_model: "facebook/encodec_24khz"
+encodec_bandwidth: 6.0
+vocoder_fallback: "hifigan"
+use_encodec_vocoder: true
+
+# Model Arguments
+model_args:
+  gpt_layers: 30
+  gpt_n_model_channels: 1024
+  gpt_n_heads: 16
+  gpt_batch_size: 4
+  kv_cache: true
+  enable_redaction: false
+  num_chars: 255
+  tokenizer_file: "/home/ubuntu/TTS/pretrained/xtts_v2/vocab.json"
+  input_sample_rate: 24000
+  output_sample_rate: 24000
+  output_hop_length: 256
+  decoder_input_dim: 1024
+  d_vector_dim: 512
+  cond_d_vector_in_each_upsampling_layer: true
+  duration_const: 102400
+  # ✅ LONG-FORM: INCREASE GPT OUTPUT LENGTH for Parrot AI quality
+  gpt_max_audio_tokens: 605  # Match checkpoint (was 2048, reverted to checkpoint value)
+  gpt_max_prompt_tokens: 213  # CRITICAL: Must match checkpoint (was using 216 tokens, i.e., 213+3)
+  gpt_max_text_tokens: 402    # CRITICAL: Must match checkpoint (new training creates 403, setting to 402 to get 403 with special tokens)
+  gpt_number_text_tokens: 6681  # CRITICAL: Must match checkpoint text embeddings
+
+xtts_args:
+  ignore_mismatched_sizes: true
+
+# ✅ LONG-FORM TRAINING HYPERPARAMETERS
+batch_size: 3
+epochs: 500        # ← Increased from 100 - long sequences need more training
+save_step: 50
+test_delay_epochs: 1
+
+# ✅ LONG-FORM TRAINING WEIGHTS - Enable 100+ token generation
+# - gpt: 0.5 (PRIMARY - we want to train long sequences harder)
+# - waveform/latent: 1.0 (quality baseline)
+# - mel: 0.5 (learn spectral continuity for long audio)
+# - prosody: 0.2 (maintain speaker identity across tokens)
+loss_weights:
+  waveform: 1.0
+  latent: 1.0
+  mel: 5.0         # CRITICAL FIX: Was divided by seq_len before (spec_loss/300). Now set to 5.0 to compensate. Actual signal: 5.0 * normalized_loss ≈ 0.5 (strong)
+  emotion: 0.0     # DISABLED: Focus on audio quality first
+  prosody: 0.1     # LOW: Minimal interference with audio learning
+  gpt: 2.0         # KEEP: GPT loss provides primary signal
+
+# ✅ LEARNING RATES
+optim:
+  lr: 0.000002             # REVERTED to 2e-06: 2e-05 was destroying model after epoch 1. Use original stable value.
+  emotion_lr: 0.0001
+  betas: [0.9, 0.999]
+  eps: !!float 1e-8
+  weight_decay: 0.001
+
+# ✅ FIXED: Constant LR (scheduler was decaying too aggressively)
+# CosineAnnealingWarmRestarts caused plateau at epoch 14/24 by decaying toward eta_min=1e-6
+# Now keeping LR constant at 1e-06 (empirically proven to work for 14 epochs)
+lr_scheduler: "constant"
+warmup_steps: 0
+
+
+
+# Inference Settings
+temperature: 0.75
+length_penalty: 1.0
+repetition_penalty: 5.0
+top_k: 50
+top_p: 0.85
+num_gpt_outputs: 1
+gpt_cond_len: 30
+gpt_cond_chunk_len: 4
+max_ref_len: 30
+
+model_dir: null
+languages:
+  - "en"
+
+# Checkpoint Resume
+checkpoint_resume:
+  resume_training: true
+  strict_loading: false
+  load_optimizer: false
+  load_scheduler: false
+  load_prosody_predictor: true
+  load_emotion_classifier: true
+
+
+# ✅ EVALUATION METRICS
+evaluation_metrics:
+  compute_emotion_accuracy: true
+  compute_per_class_accuracy: true
+  compute_per_class_f1: true
+  compute_confusion_matrix: true
+  compute_macro_f1: true
+  compute_weighted_f1: true
+  compute_prosody_mse: true
+  save_audio_samples: true
+  num_eval_samples: 15
+  log_predictions_every_n_steps: 50
+
+# ✅ DATA AUGMENTATION
+data_augmentation:
+  use_speed_perturbation: false
+  use_pitch_shift: true
+  pitch_shift_range: [-2, 2]
+  use_noise_injection: true
+  noise_level: 0.005
+  minority_class_augmentation: true
+  minority_aug_probability: 0.2
+
+# ✅ EARLY STOPPING
+early_stopping:
+  enabled: true
+  patience: 30
+  monitor: "val_macro_f1"
+  mode: "max"
+  min_delta: 0.005
+
+# ✅ GRADIENT MONITORING
+gradient_monitoring:
+  enabled: true
+  explosion_threshold: 100.0
+  vanishing_threshold: 0.001
+  log_frequency: 25
+
+# ✅ CONFUSION MATRIX TRACKING
+confusion_tracking:
+  enabled: true
+  save_per_epoch: true
+  plot_confusion_matrix: true
+  plot_learning_curves: true
+
+# ✅ TENSORBOARD LOGGING
+tensorboard:
+  log_distribution: true
+  log_gradients: true
+  log_per_class_metrics: true
+  log_confusion_matrix_every_n_epochs: 3
+
+# ✅ DEBUGGING
+debug:
+  print_emotion_predictions: false
+  check_gradient_norms: false
+  validate_features: false
