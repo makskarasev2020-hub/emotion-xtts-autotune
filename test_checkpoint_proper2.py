@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Checkpoint sanity test that mirrors training init and forces single-sample
-inference to avoid batch-shape mismatches (e.g., CFG expanding batch).
+inference to avoid batch-shape mismatches (without touching training code).
 """
 import argparse
 import logging
@@ -87,6 +87,37 @@ def test_checkpoint(checkpoint_path, speaker_audio, text, device="cuda"):
         )
     )
 
+    # Monkey-patch GPT get_logits to clamp batch sizes for inference-only testing
+    # (keeps training/library code untouched).
+    if hasattr(model, "gpt") and hasattr(model.gpt, "get_logits"):
+        orig_get_logits = model.gpt.get_logits
+
+        def patched_get_logits(*args, **kwargs):
+            prompt = kwargs.get("prompt", None)
+            args_list = list(args)
+            first_inputs = args_list[0] if len(args_list) > 0 else None
+            second_inputs = args_list[2] if len(args_list) > 2 else kwargs.get("second_inputs", None)
+
+            if prompt is not None and first_inputs is not None:
+                if second_inputs is not None:
+                    b = min(prompt.size(0), first_inputs.size(0), second_inputs.size(0))
+                    prompt = prompt[:b]
+                    first_inputs = first_inputs[:b]
+                    second_inputs = second_inputs[:b]
+                    kwargs["prompt"] = prompt
+                    args_list[0] = first_inputs
+                    args_list[2] = second_inputs
+                else:
+                    b = min(prompt.size(0), first_inputs.size(0))
+                    prompt = prompt[:b]
+                    first_inputs = first_inputs[:b]
+                    kwargs["prompt"] = prompt
+                    args_list[0] = first_inputs
+
+            return orig_get_logits(*tuple(args_list), **kwargs)
+
+        model.gpt.get_logits = patched_get_logits
+
     logger.info(f"\nMoving model to {device}...")
     model = model.to(device)
     if hasattr(model, "gpt") and model.gpt is not None:
@@ -128,7 +159,7 @@ def test_checkpoint(checkpoint_path, speaker_audio, text, device="cuda"):
         logger.info("Getting conditioning latents...")
         with torch.no_grad():
             gpt_cond, speaker_emb = model.get_conditioning_latents(audio_path=speaker_audio)
-        # Force single-sample batch to avoid cat() batch mismatches
+        # Force single-sample batch to avoid mismatches
         gpt_cond = gpt_cond[:1]
         speaker_emb = speaker_emb[:1]
         logger.info(f"gpt_cond: {gpt_cond.shape}, speaker_emb: {speaker_emb.shape}")
@@ -145,8 +176,6 @@ def test_checkpoint(checkpoint_path, speaker_audio, text, device="cuda"):
                 repetition_penalty=5.0,
                 top_k=50,
                 top_p=0.85,
-                gpt_cfg_rate=0.0,  # disable CFG to keep batch=1
-                num_samples=1,
             )
 
         if "wav" not in outputs:
