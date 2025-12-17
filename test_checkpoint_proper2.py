@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import torch
+import numpy as np
 import torchaudio
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -181,7 +182,14 @@ def test_checkpoint(checkpoint_path, speaker_audio, text, device="cuda"):
         if "wav" not in outputs:
             raise RuntimeError("No 'wav' in outputs")
 
-        output_wav = outputs["wav"]
+        output_wav = outputs["wav"]  # numpy or torch
+
+        # Normalize to 2D torch tensor [channels, samples]
+        if isinstance(output_wav, np.ndarray):
+            output_wav = torch.from_numpy(output_wav).float()
+        if output_wav.dim() == 1:
+            output_wav = output_wav.unsqueeze(0)
+
         duration = output_wav.shape[-1] / 24000
         rms = torch.sqrt(torch.mean(output_wav**2))
         logger.info("Generation succeeded")
